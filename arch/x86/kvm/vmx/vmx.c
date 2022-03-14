@@ -2413,7 +2413,8 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf,
 	      CPU_BASED_MWAIT_EXITING |
 	      CPU_BASED_MONITOR_EXITING |
 	      CPU_BASED_INVLPG_EXITING |
-	      CPU_BASED_RDPMC_EXITING;
+	      CPU_BASED_RDPMC_EXITING |
+	      CPU_BASED_RDTSC_EXITING;
 
 	opt = CPU_BASED_TPR_SHADOW |
 	      CPU_BASED_USE_MSR_BITMAPS |
@@ -5573,6 +5574,41 @@ static int handle_bus_lock_vmexit(struct kvm_vcpu *vcpu)
  * may resume.  Otherwise they set the kvm_run parameter to indicate what needs
  * to be done to userspace and return 0.
  */
+static u32 print_once = 1;
+
+static int handle_rdtsc(struct kvm_vcpu *vcpu) 
+{ 
+	static u64 rdtsc_fake = 0;
+	static u64 rdtsc_prev = 0;
+	u64 rdtsc_real = rdtsc();
+
+	if(print_once)
+	{
+		printk("[handle_rdtsc] RDTSC Timing fix\n");
+		print_once = 0;
+		rdtsc_fake = rdtsc_real;
+	}
+
+	if(rdtsc_prev != 0)
+	{
+		if(rdtsc_real > rdtsc_prev)
+		{
+			u64 diff = rdtsc_real - rdtsc_prev;
+			u64 fake_diff =  diff / 16; 
+			rdtsc_fake += fake_diff;
+		}
+	}
+	if(rdtsc_fake > rdtsc_real)
+	{
+		rdtsc_fake = rdtsc_real;
+	}
+	rdtsc_prev = rdtsc_real;
+    	vcpu->arch.regs[VCPU_REGS_RAX] = rdtsc_fake & -1u;
+    	vcpu->arch.regs[VCPU_REGS_RDX] = (rdtsc_fake >> 32) & -1u;  
+
+    	return skip_emulated_instruction(vcpu);
+}
+
 static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu) = {
 	[EXIT_REASON_EXCEPTION_NMI]           = handle_exception_nmi,
 	[EXIT_REASON_EXTERNAL_INTERRUPT]      = handle_external_interrupt,
@@ -5625,6 +5661,7 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu) = {
 	[EXIT_REASON_PREEMPTION_TIMER]	      = handle_preemption_timer,
 	[EXIT_REASON_ENCLS]		      = handle_encls,
 	[EXIT_REASON_BUS_LOCK]                = handle_bus_lock_vmexit,
+	[EXIT_REASON_RDTSC]		      = handle_rdtsc,
 };
 
 static const int kvm_vmx_max_exit_handlers =
